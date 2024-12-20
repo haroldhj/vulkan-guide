@@ -15,6 +15,10 @@
 #define VMA_IMPLEMENTATION
 #include "vk_mem_alloc.h"
 
+#include "imgui.h"
+#include "imgui_impl_sdl2.h"
+#include "imgui_impl_vulkan.h"
+
 //< includes
 
 //> init
@@ -48,6 +52,8 @@ void VulkanEngine::init() {
   init_descriptors();
 
   init_pipelines();
+
+  init_imgui();
 
   // everything went fine
   _isInitialized = true;
@@ -121,8 +127,6 @@ void VulkanEngine::draw() {
   _drawExtent.width = _drawImage.imageExtent.width;
   _drawExtent.height = _drawImage.imageExtent.height;
 
-  VK_CHECK(vkBeginCommandBuffer(cmd, &cmdBeginInfo));
-
   vkutil::transition_image(cmd, _drawImage.image, VK_IMAGE_LAYOUT_UNDEFINED,
                            VK_IMAGE_LAYOUT_GENERAL);
   draw_background(cmd);
@@ -134,8 +138,14 @@ void VulkanEngine::draw() {
   vkutil::copy_image_to_image(cmd, _drawImage.image,
                               _swapchainImages[swapchainImageIndex],
                               _drawExtent, _swapchainExtent);
+
   vkutil::transition_image(cmd, _swapchainImages[swapchainImageIndex],
                            VK_IMAGE_LAYOUT_TRANSFER_DST_OPTIMAL,
+                           VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
+  draw_imgui(cmd, _swapchainImageViews[swapchainImageIndex]);
+
+  vkutil::transition_image(cmd, _swapchainImages[swapchainImageIndex],
+                           VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL,
                            VK_IMAGE_LAYOUT_PRESENT_SRC_KHR);
 
   // finalize the command buffer (we can no longer add commands, but it can now
@@ -196,6 +206,9 @@ void VulkanEngine::run() {
           stop_rendering = false;
         }
       }
+
+      // send SDL event to imgui for handling
+      ImGui_ImplSDL2_ProcessEvent(&e);
     }
 
     // do not draw if we are minimized
@@ -204,6 +217,29 @@ void VulkanEngine::run() {
       std::this_thread::sleep_for(std::chrono::milliseconds(100));
       continue;
     }
+
+    // imgui new frame
+    ImGui_ImplVulkan_NewFrame();
+    ImGui_ImplSDL2_NewFrame();
+    ImGui::NewFrame();
+
+    // make imgui calculate internal draw structures
+    if (ImGui::Begin("background")) {
+
+      ComputeEffect &selected = backgroundEffects[currentBackgroundEffect];
+
+      ImGui::Text("Selected effect: ", selected.name);
+
+      ImGui::SliderInt("Effect Index", &currentBackgroundEffect, 0,
+                       backgroundEffects.size() - 1);
+
+      ImGui::InputFloat4("data1", (float *)&selected.data.data1);
+      ImGui::InputFloat4("data2", (float *)&selected.data.data2);
+      ImGui::InputFloat4("data3", (float *)&selected.data.data3);
+      ImGui::InputFloat4("data4", (float *)&selected.data.data4);
+      ImGui::End();
+    }
+    ImGui::Render();
 
     draw();
   }
@@ -334,8 +370,14 @@ void VulkanEngine::init_commands() {
                                       &_frames[i]._mainCommandBuffer));
   }
 
-  VK_CHECK(vkCreateCommandPool(_device, &commandPoolInfo, nullptr, &_immCommandPool));
-
+  VK_CHECK(vkCreateCommandPool(_device, &commandPoolInfo, nullptr,
+                               &_immCommandPool));
+  VkCommandBufferAllocateInfo cmdAllocInfo =
+      vkinit::command_buffer_allocate_info(_immCommandPool, 1);
+  VK_CHECK(
+      vkAllocateCommandBuffers(_device, &cmdAllocInfo, &_immCommandBuffer));
+  _mainDeletionQueue.push_function(
+      [=]() { vkDestroyCommandPool(_device, _immCommandPool, nullptr); });
 }
 
 void VulkanEngine::init_sync_structures() {
@@ -357,6 +399,10 @@ void VulkanEngine::init_sync_structures() {
     VK_CHECK(vkCreateSemaphore(_device, &semaphoreCreateInfo, nullptr,
                                &_frames[i]._renderSemaphore));
   }
+
+  VK_CHECK(vkCreateFence(_device, &fenceCreateInfo, nullptr, &_immFence));
+  _mainDeletionQueue.push_function(
+      [=]() { vkDestroyFence(_device, _immFence, nullptr); });
 }
 
 void VulkanEngine::init_descriptors() {
@@ -408,38 +454,81 @@ void VulkanEngine::init_background_pipelines() {
   computeLayout.pSetLayouts = &_drawImageDescriptorLayout;
   computeLayout.setLayoutCount = 1;
 
+  VkPushConstantRange pushConstant{};
+  pushConstant.offset = 0;
+  pushConstant.size = sizeof(ComputePushConstants);
+  pushConstant.stageFlags = VK_SHADER_STAGE_COMPUTE_BIT;
+
+  computeLayout.pPushConstantRanges = &pushConstant;
+  computeLayout.pushConstantRangeCount = 1;
+
   VK_CHECK(vkCreatePipelineLayout(_device, &computeLayout, nullptr,
                                   &_gradientPipelineLayout));
 
-  // layout code
-  VkShaderModule computeDrawShader;
-  if (!vkutil::load_shader_module("../../shaders/gradient.comp.spv", _device,
-                                  &computeDrawShader)) {
+  VkShaderModule gradientShader;
+  if (!vkutil::load_shader_module("../../shaders/gradient_color.comp.spv",
+                                  _device, &gradientShader)) {
     fmt::print("Error when building the compute shader \n");
   }
 
-  VkPipelineShaderStageCreateInfo stageInfo{};
-  stageInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
-  stageInfo.pNext = nullptr;
-  stageInfo.stage = VK_SHADER_STAGE_COMPUTE_BIT;
-  stageInfo.module = computeDrawShader;
-  stageInfo.pName = "main";
+  VkShaderModule skyShader;
+  if (!vkutil::load_shader_module("../../shaders/sky.comp.spv", _device,
+                                  &skyShader)) {
+    fmt::print("Error when building the compute shader \n");
+  }
+
+  VkPipelineShaderStageCreateInfo stageinfo{};
+  stageinfo.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+  stageinfo.pNext = nullptr;
+  stageinfo.stage = VK_SHADER_STAGE_COMPUTE_BIT;
+  stageinfo.module = gradientShader;
+  stageinfo.pName = "main";
 
   VkComputePipelineCreateInfo computePipelineCreateInfo{};
   computePipelineCreateInfo.sType =
       VK_STRUCTURE_TYPE_COMPUTE_PIPELINE_CREATE_INFO;
   computePipelineCreateInfo.pNext = nullptr;
   computePipelineCreateInfo.layout = _gradientPipelineLayout;
-  computePipelineCreateInfo.stage = stageInfo;
+  computePipelineCreateInfo.stage = stageinfo;
+
+  ComputeEffect gradient;
+  gradient.layout = _gradientPipelineLayout;
+  gradient.name = "gradient";
+  gradient.data = {};
+
+  // default colors
+  gradient.data.data1 = glm::vec4(1, 0, 0, 1);
+  gradient.data.data2 = glm::vec4(0, 0, 1, 1);
 
   VK_CHECK(vkCreateComputePipelines(_device, VK_NULL_HANDLE, 1,
                                     &computePipelineCreateInfo, nullptr,
-                                    &_gradientPipeline));
+                                    &gradient.pipeline));
 
-  vkDestroyShaderModule(_device, computeDrawShader, nullptr);
-  _mainDeletionQueue.push_function([&]() {
+  // change the shader module only to create the sky shader
+  computePipelineCreateInfo.stage.module = skyShader;
+
+  ComputeEffect sky;
+  sky.layout = _gradientPipelineLayout;
+  sky.name = "sky";
+  sky.data = {};
+  // default sky parameters
+  sky.data.data1 = glm::vec4(0.1, 0.2, 0.4, 0.97);
+
+  VK_CHECK(vkCreateComputePipelines(_device, VK_NULL_HANDLE, 1,
+                                    &computePipelineCreateInfo, nullptr,
+                                    &sky.pipeline));
+
+  // add the 2 background effects into the array
+  backgroundEffects.push_back(gradient);
+  backgroundEffects.push_back(sky);
+
+  // destroy structures properly
+  vkDestroyShaderModule(_device, gradientShader, nullptr);
+  vkDestroyShaderModule(_device, skyShader, nullptr);
+  _mainDeletionQueue.push_function([=]() {
     vkDestroyPipelineLayout(_device, _gradientPipelineLayout, nullptr);
-    vkDestroyPipeline(_device, _gradientPipeline, nullptr);
+    vkDestroyPipeline(_device, sky.pipeline, nullptr);
+    vkDestroyPipeline(_device, gradient.pipeline, nullptr);
   });
 }
 
@@ -478,18 +567,112 @@ void VulkanEngine::destroy_swapchain() {
   }
 }
 
-void VulkanEngine::draw_background(VkCommandBuffer cmd) {
-  VkClearColorValue clearValue;
-  float flash = std::abs(std::sin(_frameNumber / 120.f));
-  clearValue = {{0.0f, 0.0f, flash, 1.0f}};
+void VulkanEngine::draw_background(VkCommandBuffer cmd) {  
+  ComputeEffect &effect = backgroundEffects[currentBackgroundEffect];
 
-  VkImageSubresourceRange clearRange =
-      vkinit::image_subresource_range(VK_IMAGE_ASPECT_COLOR_BIT);
-  
-  vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, _gradientPipeline);
+  vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_COMPUTE, effect.pipeline);
   vkCmdBindDescriptorSets(cmd, VK_PIPELINE_BIND_POINT_COMPUTE,
                           _gradientPipelineLayout, 0, 1, &_drawImageDescriptors,
                           0, nullptr);
+  vkCmdPushConstants(cmd, _gradientPipelineLayout, VK_SHADER_STAGE_COMPUTE_BIT,
+                     0, sizeof(ComputePushConstants), &effect.data);
+
   vkCmdDispatch(cmd, std::ceil(_drawExtent.width / 16.0),
                 std::ceil(_drawExtent.height / 16.0), 1);
+}
+
+void VulkanEngine::immediate_submit(
+    std::function<void(VkCommandBuffer cmd)> &&function) {
+  VK_CHECK(vkResetFences(_device, 1, &_immFence));
+  VK_CHECK(vkResetCommandBuffer(_immCommandBuffer, 0));
+
+  VkCommandBuffer cmd = _immCommandBuffer;
+
+  VkCommandBufferBeginInfo cmdBeginInfo = vkinit::command_buffer_begin_info(
+      VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT);
+
+  VK_CHECK(vkBeginCommandBuffer(cmd, &cmdBeginInfo));
+
+  function(cmd);
+
+  VK_CHECK(vkEndCommandBuffer(cmd));
+
+  VkCommandBufferSubmitInfo cmdInfo = vkinit::command_buffer_submit_info(cmd);
+  VkSubmitInfo2 submit = vkinit::submit_info(&cmdInfo, nullptr, nullptr);
+
+  VK_CHECK(vkQueueSubmit2(_graphicsQueue, 1, &submit, _immFence));
+  VK_CHECK(vkWaitForFences(_device, 1, &_immFence, true, 9999999999));
+}
+
+void VulkanEngine::init_imgui() {
+  VkDescriptorPoolSize pool_sizes[] = {
+      {VK_DESCRIPTOR_TYPE_SAMPLER, 1000},
+      {VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER, 1000},
+      {VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE, 1000},
+      {VK_DESCRIPTOR_TYPE_STORAGE_IMAGE, 1000},
+      {VK_DESCRIPTOR_TYPE_UNIFORM_TEXEL_BUFFER, 1000},
+      {VK_DESCRIPTOR_TYPE_STORAGE_TEXEL_BUFFER, 1000},
+      {VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER, 1000},
+      {VK_DESCRIPTOR_TYPE_STORAGE_BUFFER, 1000},
+      {VK_DESCRIPTOR_TYPE_UNIFORM_BUFFER_DYNAMIC, 1000},
+      {VK_DESCRIPTOR_TYPE_STORAGE_BUFFER_DYNAMIC, 1000},
+      {VK_DESCRIPTOR_TYPE_INPUT_ATTACHMENT, 1000}};
+
+  VkDescriptorPoolCreateInfo pool_info = {};
+  pool_info.sType = VK_STRUCTURE_TYPE_DESCRIPTOR_POOL_CREATE_INFO;
+  pool_info.flags = VK_DESCRIPTOR_POOL_CREATE_FREE_DESCRIPTOR_SET_BIT;
+  pool_info.maxSets = 1000;
+  pool_info.poolSizeCount = (uint32_t)std::size(pool_sizes);
+  pool_info.pPoolSizes = pool_sizes;
+
+  VkDescriptorPool imguiPool;
+  VK_CHECK(vkCreateDescriptorPool(_device, &pool_info, nullptr, &imguiPool));
+
+  ImGui::CreateContext();
+
+  ImGui_ImplSDL2_InitForVulkan(_window);
+
+  ImGui_ImplVulkan_InitInfo init_info = {};
+  init_info.Instance = _instance;
+  init_info.PhysicalDevice = _chosenGPU;
+  init_info.Device = _device;
+  init_info.Queue = _graphicsQueue;
+  init_info.DescriptorPool = imguiPool;
+  init_info.MinImageCount = 3;
+  init_info.ImageCount = 3;
+  init_info.UseDynamicRendering = true;
+
+  init_info.PipelineRenderingCreateInfo = {
+      .sType = VK_STRUCTURE_TYPE_PIPELINE_RENDERING_CREATE_INFO};
+  init_info.PipelineRenderingCreateInfo.colorAttachmentCount = 1;
+  init_info.PipelineRenderingCreateInfo.pColorAttachmentFormats =
+      &_swapchainImageFormat;
+
+  init_info.MSAASamples = VK_SAMPLE_COUNT_1_BIT;
+
+  ImGui_ImplVulkan_Init(&init_info);
+
+  ImGui_ImplVulkan_CreateFontsTexture();
+
+  // add the destroy the imgui created structures
+  _mainDeletionQueue.push_function([=]() {
+    ImGui_ImplVulkan_Shutdown();
+    vkDestroyDescriptorPool(_device, imguiPool, nullptr);
+  });
+}
+
+void VulkanEngine::draw_imgui(VkCommandBuffer cmd,
+                              VkImageView targetImageView) {
+  VkRenderingAttachmentInfo colorAttachment = vkinit::attachment_info(
+      targetImageView, nullptr, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
+  VkRenderingInfo renderInfo =
+      vkinit::rendering_info(_swapchainExtent, &colorAttachment, nullptr);
+
+  vkCmdBeginRendering(cmd, &renderInfo);
+
+  auto data = ImGui::GetDrawData();
+  if (data)
+    ImGui_ImplVulkan_RenderDrawData(data, cmd);
+
+  vkCmdEndRendering(cmd);
 }
