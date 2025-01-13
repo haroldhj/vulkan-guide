@@ -178,7 +178,10 @@ void VulkanEngine::draw()
 	//request image from the swapchain
 	uint32_t swapchainImageIndex;
 
-	VkResult e = vkAcquireNextImageKHR(_device, _swapchain, 1000000000, get_current_frame()._swapchainSemaphore, nullptr, &swapchainImageIndex);
+	VkResult e = vkAcquireNextImageKHR(
+            _device, _swapchain, 1000000000,
+            get_current_frame()._swapchainSemaphore,
+            get_current_frame()._renderFence, &swapchainImageIndex);
 	if(e == VK_ERROR_OUT_OF_DATE_KHR) {
 		rebuild_swapchain();
 		return;

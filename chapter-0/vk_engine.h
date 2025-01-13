@@ -38,17 +38,17 @@ struct FrameData {
 };
 
 struct ComputePushConstants {
-    glm::vec4 data1;
-    glm::vec4 data2;
-    glm::vec4 data3;
-    glm::vec4 data4;
+  glm::vec4 data1;
+  glm::vec4 data2;
+  glm::vec4 data3;
+  glm::vec4 data4;
 };
 
 struct ComputeEffect {
-    const char* name;
-    VkPipeline pipeline;
-    VkPipelineLayout layout;
-    ComputePushConstants data;
+  const char *name;
+  VkPipeline pipeline;
+  VkPipelineLayout layout;
+  ComputePushConstants data;
 };
 
 constexpr unsigned int FRAME_OVERLAP = 2;
@@ -93,12 +93,20 @@ public:
   VkPipeline _gradientPipeline;
   VkPipelineLayout _gradientPipelineLayout;
 
+  VkPipelineLayout _trianglePipelineLayout;
+  VkPipeline _trianglePipeline;
+
+  VkPipelineLayout _meshPipelineLayout;
+  VkPipeline _meshPipeline;
+
+  GPUMeshBuffers rectangle;
+
   VkFence _immFence;
   VkCommandBuffer _immCommandBuffer;
   VkCommandPool _immCommandPool;
 
   std::vector<ComputeEffect> backgroundEffects;
-  int currentBackgroundEffect {0};
+  int currentBackgroundEffect{0};
 
   FrameData &get_current_frame() {
     return _frames[_frameNumber % FRAME_OVERLAP];
@@ -122,6 +130,8 @@ public:
 
 private:
   void init_background_pipelines();
+  void init_triangle_pipeline();
+  void init_mesh_pipeline();
   void init_commands();
   void init_descriptors();
   void init_pipelines();
@@ -132,6 +142,14 @@ private:
   void create_swapchain(uint32_t width, uint32_t height);
   void destroy_swapchain();
   void draw_background(VkCommandBuffer cmd);
+  void draw_geometry(VkCommandBuffer cmd);
   void draw_imgui(VkCommandBuffer cmd, VkImageView targetImageView);
+  AllocatedBuffer create_buffer(size_t allocSize, VkBufferUsageFlags usage,
+                                VmaMemoryUsage memoryUsage);
+  void destroy_buffer(const AllocatedBuffer& buffer);
+
+  GPUMeshBuffers uploadMesh(std::span<uint32_t> indices, std::span<Vertex> vertices);
+
+  void init_default_data();
 };
 //< intro

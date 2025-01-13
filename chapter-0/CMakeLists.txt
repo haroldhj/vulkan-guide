@@ -3,7 +3,9 @@
 add_executable (chapter_0 
   main.cpp
   vk_engine.cpp
+  vk_loader.cpp
   vk_engine.h
+  vk_loader.h  
  )
 
 set_property(TARGET chapter_0 PROPERTY CXX_STANDARD 20)
