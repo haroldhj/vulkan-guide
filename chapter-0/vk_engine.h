@@ -12,10 +12,12 @@
 // bootstrap library
 #include "VkBootstrap.h"
 
+#include "vk_loader.h"
+
 struct DeletionQueue {
   std::deque<std::function<void()>> deletors;
 
-  void push_function(std::function<void()> &&function) {
+  void push_function(std::function<void()>&& function) {
     deletors.push_back(function);
   }
 
@@ -45,7 +47,7 @@ struct ComputePushConstants {
 };
 
 struct ComputeEffect {
-  const char *name;
+  const char* name;
   VkPipeline pipeline;
   VkPipelineLayout layout;
   ComputePushConstants data;
@@ -55,12 +57,12 @@ constexpr unsigned int FRAME_OVERLAP = 2;
 
 class VulkanEngine {
 public:
-  bool _isInitialized{false};
-  int _frameNumber{0};
-  bool stop_rendering{false};
-  VkExtent2D _windowExtent{1600, 800};
+  bool _isInitialized{ false };
+  int _frameNumber{ 0 };
+  bool stop_rendering{ false };
+  VkExtent2D _windowExtent{ 1600, 800 };
 
-  struct SDL_Window *_window{nullptr};
+  struct SDL_Window* _window{ nullptr };
 
   VkInstance _instance;                      // Vulkan library handle
   VkDebugUtilsMessengerEXT _debug_messenger; // Vulkan debug output handle
@@ -105,14 +107,18 @@ public:
   VkCommandBuffer _immCommandBuffer;
   VkCommandPool _immCommandPool;
 
-  std::vector<ComputeEffect> backgroundEffects;
-  int currentBackgroundEffect{0};
+  AllocatedImage _depthImage;
 
-  FrameData &get_current_frame() {
+  std::vector<std::shared_ptr<MeshAsset>> testMeshes;
+
+  std::vector<ComputeEffect> backgroundEffects;
+  int currentBackgroundEffect{ 0 };
+
+  FrameData& get_current_frame() {
     return _frames[_frameNumber % FRAME_OVERLAP];
   };
 
-  static VulkanEngine &Get();
+  static VulkanEngine& Get();
 
   // initializes everything in the engine
   void init();
@@ -126,7 +132,8 @@ public:
   // run main loop
   void run();
 
-  void immediate_submit(std::function<void(VkCommandBuffer cmd)> &&function);
+  void immediate_submit(std::function<void(VkCommandBuffer cmd)>&& function);
+  GPUMeshBuffers uploadMesh(std::span<uint32_t> indices, std::span<Vertex> vertices);
 
 private:
   void init_background_pipelines();
@@ -145,10 +152,8 @@ private:
   void draw_geometry(VkCommandBuffer cmd);
   void draw_imgui(VkCommandBuffer cmd, VkImageView targetImageView);
   AllocatedBuffer create_buffer(size_t allocSize, VkBufferUsageFlags usage,
-                                VmaMemoryUsage memoryUsage);
+    VmaMemoryUsage memoryUsage);
   void destroy_buffer(const AllocatedBuffer& buffer);
-
-  GPUMeshBuffers uploadMesh(std::span<uint32_t> indices, std::span<Vertex> vertices);
 
   void init_default_data();
 };
