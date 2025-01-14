@@ -137,9 +137,9 @@ void VulkanEngine::draw() {
   _drawExtent.width = _drawImage.imageExtent.width;
   _drawExtent.height = _drawImage.imageExtent.height;
 
-  vkutil::transition_image(cmd, _drawImage.image, VK_IMAGE_LAYOUT_UNDEFINED,
-    VK_IMAGE_LAYOUT_GENERAL);
-  draw_background(cmd);
+  // vkutil::transition_image(cmd, _drawImage.image, VK_IMAGE_LAYOUT_UNDEFINED,
+  //   VK_IMAGE_LAYOUT_GENERAL);
+  // draw_background(cmd);
   vkutil::transition_image(cmd, _drawImage.image, VK_IMAGE_LAYOUT_GENERAL, VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL);
   vkutil::transition_image(cmd, _depthImage.image, VK_IMAGE_LAYOUT_UNDEFINED, VK_IMAGE_LAYOUT_DEPTH_ATTACHMENT_OPTIMAL);
   draw_geometry(cmd);
@@ -471,14 +471,14 @@ void VulkanEngine::init_descriptors() {
 }
 
 void VulkanEngine::init_pipelines() {
-  init_triangle_pipeline();
-  init_background_pipelines();
+  // init_triangle_pipeline();
+  // init_background_pipelines();
   init_mesh_pipeline();
 }
 
 void VulkanEngine::init_mesh_pipeline() {
   VkShaderModule triangleFragShader;
-  if (!vkutil::load_shader_module("../../shaders/colored_triangle.frag.spv",
+  if (!vkutil::load_shader_module("../shaders/colored_triangle.frag.spv",
     _device, &triangleFragShader)) {
     fmt::print("Error when building the triangle fragment shader module");
   }
@@ -488,7 +488,7 @@ void VulkanEngine::init_mesh_pipeline() {
 
   VkShaderModule triangleVertexShader;
   if (!vkutil::load_shader_module(
-    "../../shaders/colored_triangle_mesh.vert.spv", _device,
+    "../shaders/colored_triangle_mesh.vert.spv", _device,
     &triangleVertexShader)) {
     fmt::print("Error when building the triangle vertex shader module");
   }
@@ -535,7 +535,7 @@ void VulkanEngine::init_mesh_pipeline() {
 
 void VulkanEngine::init_triangle_pipeline() {
   VkShaderModule triangleFragShader;
-  if (!vkutil::load_shader_module("../../shaders/colored_triangle.frag.spv",
+  if (!vkutil::load_shader_module("../shaders/colored_triangle.frag.spv",
     _device, &triangleFragShader)) {
     fmt::print("Error when building the triangle fragment shader module");
   }
@@ -544,7 +544,7 @@ void VulkanEngine::init_triangle_pipeline() {
   }
 
   VkShaderModule triangleVertexShader;
-  if (!vkutil::load_shader_module("../../shaders/colored_triangle.vert.spv",
+  if (!vkutil::load_shader_module("../shaders/colored_triangle.vert.spv",
     _device, &triangleVertexShader)) {
     fmt::print("Error when building the triangle vertex shader module");
   }
@@ -598,13 +598,13 @@ void VulkanEngine::init_background_pipelines() {
     &_gradientPipelineLayout));
 
   VkShaderModule gradientShader;
-  if (!vkutil::load_shader_module("../../shaders/gradient_color.comp.spv",
+  if (!vkutil::load_shader_module("../shaders/gradient_color.comp.spv",
     _device, &gradientShader)) {
     fmt::print("Error when building the compute shader \n");
   }
 
   VkShaderModule skyShader;
-  if (!vkutil::load_shader_module("../../shaders/sky.comp.spv", _device,
+  if (!vkutil::load_shader_module("../shaders/sky.comp.spv", _device,
     &skyShader)) {
     fmt::print("Error when building the compute shader \n");
   }
@@ -721,7 +721,8 @@ void VulkanEngine::draw_geometry(VkCommandBuffer cmd) {
   VkRenderingInfo renderInfo =
     vkinit::rendering_info(_drawExtent, &colorAttachment, nullptr);
   vkCmdBeginRendering(cmd, &renderInfo);
-  vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, _trianglePipeline);
+  
+  // vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, _trianglePipeline);
 
   VkViewport viewport = {};
   viewport.x = 0;
@@ -741,7 +742,7 @@ void VulkanEngine::draw_geometry(VkCommandBuffer cmd) {
 
   vkCmdSetScissor(cmd, 0, 1, &scissor);
 
-  vkCmdDraw(cmd, 3, 1, 0, 0);
+  // vkCmdDraw(cmd, 3, 1, 0, 0);
 
   vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, _meshPipeline);
   GPUDrawPushConstants push_constants;
@@ -965,5 +966,5 @@ void VulkanEngine::init_default_data() {
     destroy_buffer(rectangle.vertexBuffer);
     });
 
-  testMeshes = loadGltfMeshes(this, "..\\..\\assets\\basicmesh.glb").value();
+  testMeshes = loadGltfMeshes(this, "../assets/basicmesh.glb").value();
 }
